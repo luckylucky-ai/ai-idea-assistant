@@ -17,12 +17,14 @@ from flask import Flask, request, jsonify
 import anthropic
 import requests  # 新增：用于调用飞书API
 
-# 加载 .env 文件
+# 加载 .env 文件（仅本地开发使用，生产环境通过平台环境变量配置）
 try:
     from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    print("提示: 安装 python-dotenv 可自动加载 .env 文件")
+    if os.path.exists('.env'):
+        load_dotenv()
+except (ImportError, FileNotFoundError):
+    # 生产环境不需要 .env 文件
+    pass
 
 # 导入企业微信加密模块
 try:
