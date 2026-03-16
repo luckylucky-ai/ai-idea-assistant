@@ -1103,15 +1103,25 @@ def feishu_webhook():
         content = None
         content_str = message.get("content", "{}")
         
+        # 【调试】打印完整的content内容
+        print(f"🔍 原始content: {content_str[:500]}")
+        
         try:
             content_obj = json.loads(content_str)
+            
+            # 【调试】打印解析后的结构
+            print(f"🔍 解析后的content_obj: {json.dumps(content_obj, ensure_ascii=False)[:500]}")
             
             if message_type == "text":
                 # text 类型：{"text": "消息内容"}
                 content = content_obj.get("text", "").strip()
             
             elif message_type == "post":
-                # post 类型：{"zh_cn": {"title": "...", "content": [[{"tag": "text", "text": "..."}]]}}
+                # post 类型：可能的结构
+                # 1. {"zh_cn": {"title": "...", "content": [[{"tag": "text", "text": "..."}]]}}
+                # 2. 或其他结构
+                
+                # 尝试多种解析方式
                 zh_cn = content_obj.get("zh_cn", {})
                 
                 # 提取标题（如果有）
@@ -1121,13 +1131,24 @@ def feishu_webhook():
                 post_content = zh_cn.get("content", [])
                 text_parts = []
                 
+                print(f"🔍 zh_cn: {zh_cn}")
+                print(f"🔍 post_content类型: {type(post_content)}, 长度: {len(post_content) if isinstance(post_content, list) else 'N/A'}")
+                
                 for paragraph in post_content:
+                    print(f"🔍 paragraph类型: {type(paragraph)}, 内容: {paragraph}")
                     if isinstance(paragraph, list):
                         for element in paragraph:
+                            print(f"🔍 element: {element}")
                             if isinstance(element, dict) and element.get("tag") == "text":
                                 text = element.get("text", "").strip()
                                 if text:
                                     text_parts.append(text)
+                    elif isinstance(paragraph, dict):
+                        # 可能直接是字典
+                        if paragraph.get("tag") == "text":
+                            text = paragraph.get("text", "").strip()
+                            if text:
+                                text_parts.append(text)
                 
                 # 组合标题和内容
                 if title and text_parts:
@@ -1137,10 +1158,12 @@ def feishu_webhook():
                 elif text_parts:
                     content = " ".join(text_parts)
                 
-                print(f"📝 post类型消息解析: 标题={title}, 段落数={len(text_parts)}")
+                print(f"📝 post类型消息解析: 标题={title}, 段落数={len(text_parts)}, text_parts={text_parts[:3]}")
         
         except Exception as e:
             print(f"⚠️  解析消息内容失败: {e}")
+            import traceback
+            traceback.print_exc()
             content = content_str.strip()
         
         # 检查内容是否为空
