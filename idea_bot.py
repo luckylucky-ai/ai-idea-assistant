@@ -17,6 +17,18 @@ from flask import Flask, request, jsonify
 import anthropic
 import requests  # 新增：用于调用飞书API
 
+# 时区支持
+try:
+    from pytz import timezone
+    TIMEZONE = os.getenv("TIMEZONE", "Asia/Shanghai")
+    tz = timezone(TIMEZONE)
+    TIMEZONE_AVAILABLE = True
+    print(f"🌍 时区设置: {TIMEZONE}")
+except ImportError:
+    TIMEZONE_AVAILABLE = False
+    tz = None
+    print("⚠️  pytz 未安装，将使用服务器本地时间")
+
 # 加载 .env 文件（仅本地开发使用，生产环境通过平台环境变量配置）
 try:
     from dotenv import load_dotenv
@@ -38,7 +50,8 @@ except ImportError:
 try:
     from feishu_storage_v3 import (
         save_to_feishu,
-        read_daily_summary
+        read_daily_summary,
+        list_today_docs
     )
     FEISHU_STORAGE_AVAILABLE = True
     print("✅ 飞书云文档存储模块已加载（V3 - 简化版，无需文件夹）")
@@ -64,6 +77,18 @@ FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
 
 # 飞书 Token 缓存
 feishu_token_cache = {"token": None, "expire_time": 0}
+
+# 时区感知的时间获取函数
+def get_current_time():
+    """获取当前时间（考虑时区）
+    
+    Returns:
+        datetime: 当前时间对象
+    """
+    if TIMEZONE_AVAILABLE and tz:
+        return datetime.now(tz)
+    else:
+        return datetime.now()
 
 # 消息去重（防止重复处理同一条消息）
 processed_messages = set()
@@ -275,7 +300,7 @@ def get_feishu_tenant_access_token():
 
 def generate_daily_report():
     """生成日报（优先从飞书云文档读取）"""
-    today = datetime.now()
+    today = get_current_time()
     date_str = today.strftime("%Y-%m-%d")
     
     # 1️⃣ 尝试从飞书汇总文档读取
@@ -346,7 +371,7 @@ def generate_daily_report():
 
 def generate_weekly_report():
     """生成周报（优先从飞书云文档读取）"""
-    today = datetime.now()
+    today = get_current_time()
     # 获取本周一
     monday = today - timedelta(days=today.weekday())
     
@@ -445,7 +470,7 @@ def generate_weekly_report():
 
 def generate_monthly_report():
     """生成月报"""
-    today = datetime.now()
+    today = get_current_time()
     year_month = today.strftime("%Y-%m")
     
     # 统计本月想法
@@ -520,6 +545,32 @@ def handle_command(command: str, open_id: str):
     elif command_lower == "/月报" or command_lower == "/monthly":
         report = generate_monthly_report()
         send_feishu_text_message(open_id, "📅 每月想法汇总", report)
+    
+    elif command_lower == "/文档" or command_lower == "/docs":
+        # 列出今天的所有文档
+        if FEISHU_STORAGE_AVAILABLE:
+            token = get_feishu_tenant_access_token()
+            if token:
+                docs = list_today_docs(token)
+                
+                if docs:
+                    # 构造回复消息
+                    today = get_current_time().strftime("%Y-%m-%d")
+                    message = f"📚 飞书文档列表 ({today})\n\n"
+                    
+                    for doc in docs:
+                        message += f"{doc['emoji']} {doc['title']}\n"
+                        message += f"🔗 {doc['url']}\n\n"
+                    
+                    message += "💡 提示：点击链接直接打开文档"
+                    send_feishu_text_message(open_id, "📚 今日文档", message)
+                else:
+                    send_feishu_text_message(open_id, "📚 今日文档", 
+                        f"今天还没有创建任何文档哦！\n\n💡 发送一条想法试试~")
+            else:
+                send_feishu_text_message(open_id, "错误", "⚠️ 无法获取飞书 token")
+        else:
+            send_feishu_text_message(open_id, "提示", "⚠️ 飞书云文档功能未启用")
     
     elif command_lower == "/模型" or command_lower == "/model":
         # 处理模型切换命令
@@ -665,8 +716,8 @@ def send_feishu_text_message(open_id, title, content):
         return False
 
 
-def send_feishu_message(open_id, content, category_name, category_emoji, timestamp):
-    """发送飞书消息"""
+def send_feishu_message(open_id, content, category_name, category_emoji, timestamp, doc_url=None, summary_url=None):
+    """发送飞书消息（带文档链接）"""
     token = get_feishu_tenant_access_token()
     if not token:
         return False
@@ -679,7 +730,72 @@ def send_feishu_message(open_id, content, category_name, category_emoji, timesta
             "Content-Type": "application/json"
         }
         
-        # 构造消息卡片
+        # 构造消息卡片元素
+        elements = [
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": content
+                }
+            },
+            {
+                "tag": "note",
+                "elements": [
+                    {
+                        "tag": "plain_text",
+                        "content": f"⏰ {timestamp}"
+                    }
+                ]
+            }
+        ]
+        
+        # 添加文档链接（如果有）
+        if doc_url or summary_url:
+            elements.append({
+                "tag": "hr"
+            })
+            
+            link_element = {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": "📄 **查看文档**\n"
+                }
+            }
+            elements.append(link_element)
+            
+            # 添加按钮
+            actions = []
+            if doc_url:
+                actions.append({
+                    "tag": "button",
+                    "text": {
+                        "tag": "plain_text",
+                        "content": f"{category_emoji} {category_name}记录"
+                    },
+                    "type": "primary",
+                    "url": doc_url
+                })
+            
+            if summary_url:
+                actions.append({
+                    "tag": "button",
+                    "text": {
+                        "tag": "plain_text",
+                        "content": "📊 今日汇总"
+                    },
+                    "type": "default",
+                    "url": summary_url
+                })
+            
+            if actions:
+                elements.append({
+                    "tag": "action",
+                    "actions": actions
+                })
+        
+        # 构造完整卡片
         card_content = {
             "msg_type": "interactive",
             "card": {
@@ -690,24 +806,7 @@ def send_feishu_message(open_id, content, category_name, category_emoji, timesta
                     },
                     "template": "green"
                 },
-                "elements": [
-                    {
-                        "tag": "div",
-                        "text": {
-                            "tag": "lark_md",
-                            "content": content
-                        }
-                    },
-                    {
-                        "tag": "note",
-                        "elements": [
-                            {
-                                "tag": "plain_text",
-                                "content": f"⏰ {timestamp}"
-                            }
-                        ]
-                    }
-                ]
+                "elements": elements
             }
         }
         
@@ -737,9 +836,9 @@ def send_feishu_message(open_id, content, category_name, category_emoji, timesta
 def save_idea(category: str, content: str, timestamp: str = None) -> dict:
     """保存想法（双重存储：本地文件 + 飞书云文档）"""
     if timestamp is None:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = get_current_time().strftime("%Y-%m-%d %H:%M:%S")
     
-    date_str = datetime.now().strftime("%Y-%m-%d")
+    date_str = get_current_time().strftime("%Y-%m-%d")
     
     # 每个类别一个文件
     category_file = IDEAS_DIR / f"{category}.md"
@@ -778,11 +877,14 @@ def save_idea(category: str, content: str, timestamp: str = None) -> dict:
     
     # 2️⃣ 保存到飞书云文档
     feishu_success = False
+    doc_url = None
+    summary_url = None
+    
     if FEISHU_STORAGE_AVAILABLE:
         token = get_feishu_tenant_access_token()
         if token:
             try:
-                feishu_success = save_to_feishu(
+                result = save_to_feishu(
                     token=token,
                     category=category,
                     content=content,
@@ -790,6 +892,15 @@ def save_idea(category: str, content: str, timestamp: str = None) -> dict:
                     category_name=cat_info["name"],
                     category_emoji=cat_info["emoji"]
                 )
+                
+                if isinstance(result, dict):
+                    feishu_success = result.get("success", False)
+                    doc_url = result.get("doc_url")
+                    summary_url = result.get("summary_url")
+                else:
+                    # 兼容旧版本（返回 bool）
+                    feishu_success = result
+                
                 if feishu_success:
                     print(f"✅ 飞书云文档保存成功")
             except Exception as e:
@@ -802,7 +913,9 @@ def save_idea(category: str, content: str, timestamp: str = None) -> dict:
         "category": cat_info["name"],
         "emoji": cat_info["emoji"],
         "file": str(category_file),
-        "timestamp": timestamp
+        "timestamp": timestamp,
+        "doc_url": doc_url,
+        "summary_url": summary_url
     }
 
 
@@ -970,7 +1083,9 @@ def feishu_webhook():
                     content=content,
                     category_name=result['category'],
                     category_emoji=result['emoji'],
-                    timestamp=result['timestamp']
+                    timestamp=result['timestamp'],
+                    doc_url=result.get('doc_url'),
+                    summary_url=result.get('summary_url')
                 )
             else:
                 print("⚠️  未获取到 open_id，无法回复")

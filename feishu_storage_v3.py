@@ -11,6 +11,23 @@
 import os
 import requests
 from datetime import datetime
+from pytz import timezone
+
+# 时区配置
+TIMEZONE = os.getenv("TIMEZONE", "Asia/Shanghai")
+tz = timezone(TIMEZONE)
+
+# 分类配置
+CATEGORY_FOLDERS = {
+    "work": {"name": "工作", "emoji": "💼"},
+    "life": {"name": "生活", "emoji": "🏠"},
+    "study": {"name": "学习", "emoji": "📚"},
+    "inspiration": {"name": "灵感", "emoji": "💡"},
+    "todo": {"name": "待办", "emoji": "✅"},
+    "health": {"name": "健康", "emoji": "💪"},
+    "finance": {"name": "财务", "emoji": "💰"},
+    "other": {"name": "其他", "emoji": "📝"},
+}
 
 # 文档缓存
 # 格式: {category: {date: doc_id}}
@@ -312,22 +329,28 @@ def save_to_feishu(token, category, content, timestamp, category_name, category_
         category_emoji: 分类图标
         
     Returns:
-        bool: 是否成功
+        dict: {"success": bool, "doc_url": str, "summary_url": str}
     """
     if not token:
         print("⚠️  未获取到 token")
-        return False
+        return {"success": False, "doc_url": None, "summary_url": None}
     
-    date_str = datetime.now().strftime("%Y-%m-%d")
+    # 使用配置的时区获取当前日期
+    now = datetime.now(tz)
+    date_str = now.strftime("%Y-%m-%d")
     time_str = timestamp.split(" ")[1] if " " in timestamp else timestamp
     
     success = True
+    doc_url = None
+    summary_url = None
     
     # 1️⃣ 保存到分类文档
     doc_id = get_or_create_daily_doc(token, category, date_str, category_name, category_emoji)
     if doc_id:
         if append_to_doc(token, doc_id, content, time_str):
             print(f"✅ 已保存到分类文档: {category_name}")
+            # 构造文档链接
+            doc_url = f"https://feishu.cn/docx/{doc_id}"
         else:
             success = False
     else:
@@ -340,13 +363,19 @@ def save_to_feishu(token, category, content, timestamp, category_name, category_
         summary_content = f"【{category_emoji} {category_name}】{content}"
         if append_to_doc(token, summary_doc_id, summary_content, time_str):
             print(f"✅ 已保存到汇总文档")
+            # 构造汇总文档链接
+            summary_url = f"https://feishu.cn/docx/{summary_doc_id}"
         else:
             success = False
     else:
         print(f"❌ 无法创建汇总文档")
         success = False
     
-    return success
+    return {
+        "success": success,
+        "doc_url": doc_url,
+        "summary_url": summary_url
+    }
 
 
 def read_daily_summary(token, date_str):
@@ -380,14 +409,14 @@ def read_daily_summary(token, date_str):
         result = response.json()
         
         if result.get("code") == 0:
-            blocks = result.get("data", {}).get("blocks", [])
+            blocks = result.get("data", {}).get("items", [])
             
             content_parts = []
             for block in blocks:
-                if block.get("block_type") == 1:
+                if block.get("block_type") == 2:  # 文本块
                     text_elements = block.get("text", {}).get("elements", [])
                     for elem in text_elements:
-                        text = elem.get("text_run", {}).get("text", "")
+                        text = elem.get("text_run", {}).get("content", "")
                         if text:
                             content_parts.append(text)
             
@@ -398,6 +427,108 @@ def read_daily_summary(token, date_str):
     except Exception as e:
         print(f"❌ 读取文档失败: {e}")
         return None
+
+
+def list_today_docs(token):
+    """列出今日所有文档
+    
+    Args:
+        token: 飞书 access token
+        
+    Returns:
+        list: [{'title': str, 'url': str, 'emoji': str, 'category': str}]
+    """
+    if not token:
+        return []
+    
+    # 获取今日日期
+    now = datetime.now(tz)
+    date_str = now.strftime("%Y-%m-%d")
+    
+    docs = []
+    
+    # 添加汇总文档
+    summary_title = f"{date_str} 📊 全部想法汇总"
+    summary_doc_id = find_doc_by_title(token, summary_title)
+    if summary_doc_id:
+        docs.append({
+            'title': summary_title,
+            'url': f"https://feishu.cn/docx/{summary_doc_id}",
+            'emoji': '📊',
+            'category': '汇总'
+        })
+    
+    # 添加各分类文档
+    for category, info in CATEGORY_FOLDERS.items():
+        title = f"{date_str} {info['emoji']} {info['name']}记录"
+        doc_id = find_doc_by_title(token, title)
+        if doc_id:
+            docs.append({
+                'title': title,
+                'url': f"https://feishu.cn/docx/{doc_id}",
+                'emoji': info['emoji'],
+                'category': info['name']
+            })
+    
+    return docs
+
+
+def list_today_docs(token):
+    """列出今天的所有文档
+    
+    Args:
+        token: 飞书 access token
+        
+    Returns:
+        list: [{"title": str, "url": str, "doc_id": str}]
+    """
+    if not token:
+        return []
+    
+    # 获取今天的日期
+    now = datetime.now(tz)
+    date_str = now.strftime("%Y-%m-%d")
+    
+    # 分类配置（和主程序保持一致）
+    categories = {
+        "work": {"name": "工作", "emoji": "💼"},
+        "life": {"name": "生活", "emoji": "🏠"},
+        "study": {"name": "学习", "emoji": "📚"},
+        "inspiration": {"name": "灵感", "emoji": "💡"},
+        "todo": {"name": "待办", "emoji": "✅"},
+        "health": {"name": "健康", "emoji": "💪"},
+        "finance": {"name": "财务", "emoji": "💰"},
+        "other": {"name": "其他", "emoji": "📝"},
+    }
+    
+    docs = []
+    
+    # 汇总文档（优先显示）
+    summary_title = f"{date_str} 📊 全部想法汇总"
+    summary_doc_id = find_doc_by_title(token, summary_title)
+    if summary_doc_id:
+        docs.append({
+            "title": summary_title,
+            "url": f"https://feishu.cn/docx/{summary_doc_id}",
+            "doc_id": summary_doc_id,
+            "category": "summary",
+            "emoji": "📊"
+        })
+    
+    # 各分类文档
+    for category, info in categories.items():
+        title = f"{date_str} {info['emoji']} {info['name']}记录"
+        doc_id = find_doc_by_title(token, title)
+        if doc_id:
+            docs.append({
+                "title": title,
+                "url": f"https://feishu.cn/docx/{doc_id}",
+                "doc_id": doc_id,
+                "category": category,
+                "emoji": info['emoji']
+            })
+    
+    return docs
 
 
 # 测试
