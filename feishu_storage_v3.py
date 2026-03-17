@@ -9,6 +9,7 @@
 """
 
 import os
+import json
 import requests
 from datetime import datetime
 from pytz import timezone
@@ -43,7 +44,7 @@ def create_feishu_doc(token, title):
         title: 文档标题
         
     Returns:
-        doc_id: 文档 ID，失败返回 None
+        dict: {"doc_id": str, "file_token": str} 或 None
     """
     try:
         url = "https://open.feishu.cn/open-apis/docx/v1/documents"
@@ -61,16 +62,32 @@ def create_feishu_doc(token, title):
         response = requests.post(url, headers=headers, json=data)
         result = response.json()
         
+        # 打印完整响应查看结构
+        print(f"🔍 创建文档响应: {json.dumps(result, ensure_ascii=False)[:500]}")
+        
         if result.get("code") == 0:
-            doc_id = result["data"]["document"]["document_id"]
-            print(f"✅ 创建文档成功: {title} ({doc_id})")
-            return doc_id
+            doc_data = result["data"]["document"]
+            doc_id = doc_data.get("document_id")
+            
+            # 尝试获取 file_token（可能在响应中）
+            file_token = doc_data.get("file_token") or doc_data.get("token")
+            
+            print(f"✅ 创建文档成功: {title}")
+            print(f"   document_id: {doc_id}")
+            print(f"   file_token: {file_token}")
+            
+            return {
+                "doc_id": doc_id,
+                "file_token": file_token
+            }
         else:
             print(f"❌ 创建文档失败: {result}")
             return None
             
     except Exception as e:
         print(f"❌ 创建文档异常: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
@@ -196,18 +213,22 @@ def get_or_create_daily_doc(token, category, date_str, category_name, emoji, use
     
     # 查找已存在的文档
     doc_id = find_doc_by_title(token, title)
+    file_token = None
     
     is_new_doc = False
     if not doc_id:
         # 创建新文档
-        doc_id = create_feishu_doc(token, title)
-        is_new_doc = True
+        result = create_feishu_doc(token, title)
+        if result:
+            doc_id = result.get("doc_id")
+            file_token = result.get("file_token")
+            is_new_doc = True
     
     # 如果是新文档且有 user_open_id，自动授予编辑权限
-    if is_new_doc and doc_id and user_open_id:
-        add_doc_permission(token, doc_id, user_open_id)
+    if is_new_doc and file_token and user_open_id:
+        add_doc_permission(token, file_token, user_open_id)
     
-    # 缓存
+    # 缓存 doc_id
     if doc_id:
         if category not in doc_cache:
             doc_cache[category] = {}
@@ -238,16 +259,20 @@ def get_or_create_summary_doc(token, date_str, user_open_id=None):
     
     # 查找已存在的文档
     doc_id = find_doc_by_title(token, title)
+    file_token = None
     
     is_new_doc = False
     if not doc_id:
         # 创建新文档
-        doc_id = create_feishu_doc(token, title)
-        is_new_doc = True
+        result = create_feishu_doc(token, title)
+        if result:
+            doc_id = result.get("doc_id")
+            file_token = result.get("file_token")
+            is_new_doc = True
     
     # 如果是新文档且有 user_open_id，自动授予编辑权限
-    if is_new_doc and doc_id and user_open_id:
-        add_doc_permission(token, doc_id, user_open_id)
+    if is_new_doc and file_token and user_open_id:
+        add_doc_permission(token, file_token, user_open_id)
     
     # 缓存
     if doc_id:
