@@ -96,7 +96,8 @@ def add_doc_permission(token, doc_id, user_open_id):
         data = {
             "member_type": "openid",
             "member_id": user_open_id,
-            "perm": "edit"  # 可编辑权限
+            "perm": "edit",  # 可编辑权限
+            "type": "docx"   # 文档类型：docx
         }
         
         response = requests.post(url, headers=headers, json=data)
