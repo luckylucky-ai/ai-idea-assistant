@@ -76,6 +76,7 @@ WEWORK_CORP_ID = os.getenv("WEWORK_CORP_ID", "")
 # 飞书配置
 FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "")
 FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
+FEISHU_VERIFY_TOKEN = os.getenv("FEISHU_VERIFY_TOKEN", "")  # 飞书事件订阅验证令牌
 
 # 飞书 Token 缓存
 feishu_token_cache = {"token": None, "expire_time": 0}
@@ -1058,16 +1059,46 @@ def wework_webhook():
 
 
 # ========== 飞书 Webhook ==========
+def verify_feishu_signature():
+    """验证飞书 Webhook 请求签名（HMAC-SHA256）
+
+    飞书签名算法: SHA256(token + timestamp + nonce + body)
+
+    Returns:
+        bool: 验证通过返回 True，失败返回 False
+    """
+    if not FEISHU_VERIFY_TOKEN:
+        return True  # 未配置验证令牌时跳过验证（兼容旧部署）
+
+    timestamp = request.headers.get("X-Lark-Request-Timestamp", "")
+    nonce = request.headers.get("X-Lark-Request-Nonce", "")
+    signature = request.headers.get("X-Lark-Signature", "")
+
+    if not signature:
+        return False
+
+    body_bytes = request.get_data()
+    content = FEISHU_VERIFY_TOKEN + timestamp + nonce + body_bytes.decode("utf-8")
+    expected_sig = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(expected_sig, signature)
+
+
 @app.route("/feishu", methods=["POST"])
 def feishu_webhook():
     """接收飞书消息"""
     try:
+        # 验证飞书签名
+        if not verify_feishu_signature():
+            print("❌ 飞书签名验证失败，拒绝请求")
+            return jsonify({"code": 403, "msg": "signature mismatch"}), 403
+
         data = request.get_json()
-        
-        print(f"📥 收到飞书请求: {json.dumps(data, ensure_ascii=False)[:200]}")
-        
+
+        print(f"📥 收到飞书请求")
+
         # 飞书验证 URL
-        if "challenge" in data:
+        if data.get("type") == "url_verification" or "challenge" in data:
+            # 验证令牌已通过签名验证，直接响应 challenge
             print("✅ 飞书 URL 验证成功")
             return jsonify({"challenge": data["challenge"]})
         
@@ -1256,7 +1287,7 @@ if __name__ == "__main__":
     status = get_classifier_status()
     print(f"{status['emoji']} 分类模式: {status['name']}")
     if ANTHROPIC_API_KEY:
-        print(f"   ✅ Claude API Key: {ANTHROPIC_API_KEY[:20]}...{ANTHROPIC_API_KEY[-5:]}")
+        print(f"   ✅ Claude API Key: 已配置")
     else:
         print(f"   ⚠️  未配置 ANTHROPIC_API_KEY")
     print(f"   当前模式: {CLASSIFIER_MODE}")
@@ -1266,14 +1297,14 @@ if __name__ == "__main__":
     feishu_status = "✅ 已配置" if (FEISHU_APP_ID and FEISHU_APP_SECRET) else "❌ 未配置"
     print(f"📱 飞书配置: {feishu_status}")
     if FEISHU_APP_ID and FEISHU_APP_SECRET:
-        print(f"   App ID: {FEISHU_APP_ID[:20]}...")
+        print(f"   App ID: 已配置")
     
     # 企业微信配置状态
     wework_status = "✅ 已配置" if (WEWORK_TOKEN and WEWORK_ENCODING_AES_KEY and WEWORK_CORP_ID) else "❌ 未配置"
     print(f"🔐 企业微信加密: {wework_status}")
     if WEWORK_TOKEN and WEWORK_ENCODING_AES_KEY and WEWORK_CORP_ID:
-        print(f"   Token: {WEWORK_TOKEN[:10]}...")
-        print(f"   CorpID: {WEWORK_CORP_ID[:10]}...")
+        print(f"   Token: 已配置")
+        print(f"   CorpID: 已配置")
     
     print(f"🌐 访问地址:")
     print(f"   - 企业微信: http://0.0.0.0:{PORT}/wework")
