@@ -900,8 +900,15 @@ def send_feishu_message(open_id, content, category_name, category_emoji, timesta
         return False
 
 
-def save_idea(category: str, content: str, timestamp: str = None) -> dict:
-    """保存想法（双重存储：本地文件 + 飞书云文档）"""
+def save_idea(category: str, content: str, timestamp: str = None, user_open_id: str = None) -> dict:
+    """保存想法（双重存储：本地文件 + 飞书云文档）
+    
+    Args:
+        category: 分类
+        content: 内容
+        timestamp: 时间戳（可选）
+        user_open_id: 用户的 open_id（可选，用于飞书文档自动授权）
+    """
     if timestamp is None:
         timestamp = get_current_time().strftime("%Y-%m-%d %H:%M:%S")
     
@@ -957,7 +964,8 @@ def save_idea(category: str, content: str, timestamp: str = None) -> dict:
                     content=content,
                     timestamp=timestamp,
                     category_name=cat_info["name"],
-                    category_emoji=cat_info["emoji"]
+                    category_emoji=cat_info["emoji"],
+                    user_open_id=user_open_id  # 传递用户ID用于自动授权
                 )
                 
                 if isinstance(result, dict):
@@ -1183,7 +1191,7 @@ def feishu_webhook():
         
         # 保存
         try:
-            result = save_idea(category, content)
+            result = save_idea(category, content, user_open_id=open_id)
             print(f"✅ 已保存到: {result['category']}")
             print(f"📄 文件路径: {result['file']}")
         except Exception as e:

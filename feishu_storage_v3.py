@@ -74,6 +74,50 @@ def create_feishu_doc(token, title):
         return None
 
 
+def add_doc_permission(token, doc_id, user_open_id):
+    """给文档添加协作者（可编辑权限）
+    
+    Args:
+        token: 飞书 access token
+        doc_id: 文档 ID
+        user_open_id: 用户的 open_id
+        
+    Returns:
+        bool: 是否成功
+    """
+    try:
+        url = f"https://open.feishu.cn/open-apis/drive/v1/permissions/{doc_id}/members"
+        
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+        
+        data = {
+            "member_type": "openid",
+            "member_id": user_open_id,
+            "perm": "edit"  # 可编辑权限
+        }
+        
+        response = requests.post(url, headers=headers, json=data)
+        result = response.json()
+        
+        if result.get("code") == 0:
+            print(f"✅ 已授予编辑权限: {doc_id} → {user_open_id}")
+            return True
+        else:
+            # 可能已经有权限了，不算错误
+            if result.get("code") == 1254044:  # 已存在
+                print(f"ℹ️  用户已有权限: {doc_id}")
+                return True
+            print(f"⚠️  授权失败: {result}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ 授权异常: {e}")
+        return False
+
+
 def find_doc_by_title(token, title):
     """查找指定标题的文档
     
@@ -118,8 +162,8 @@ def find_doc_by_title(token, title):
         return None
 
 
-def get_or_create_daily_doc(token, category, date_str, category_name, emoji):
-    """获取或创建今日文档
+def get_or_create_daily_doc(token, category, date_str, category_name, emoji, user_open_id=None):
+    """获取或创建今日文档（自动授予用户编辑权限）
     
     Args:
         token: 飞书 access token
@@ -127,6 +171,7 @@ def get_or_create_daily_doc(token, category, date_str, category_name, emoji):
         date_str: 日期字符串
         category_name: 分类名称
         emoji: 分类图标
+        user_open_id: 用户的 open_id（可选，用于自动授权）
         
     Returns:
         doc_id: 文档 ID
@@ -143,9 +188,15 @@ def get_or_create_daily_doc(token, category, date_str, category_name, emoji):
     # 查找已存在的文档
     doc_id = find_doc_by_title(token, title)
     
+    is_new_doc = False
     if not doc_id:
         # 创建新文档
         doc_id = create_feishu_doc(token, title)
+        is_new_doc = True
+    
+    # 如果是新文档且有 user_open_id，自动授予编辑权限
+    if is_new_doc and doc_id and user_open_id:
+        add_doc_permission(token, doc_id, user_open_id)
     
     # 缓存
     if doc_id:
@@ -156,12 +207,13 @@ def get_or_create_daily_doc(token, category, date_str, category_name, emoji):
     return doc_id
 
 
-def get_or_create_summary_doc(token, date_str):
-    """获取或创建今日汇总文档
+def get_or_create_summary_doc(token, date_str, user_open_id=None):
+    """获取或创建今日汇总文档（自动授予用户编辑权限）
     
     Args:
         token: 飞书 access token
         date_str: 日期字符串
+        user_open_id: 用户的 open_id（可选，用于自动授权）
         
     Returns:
         doc_id: 文档 ID
@@ -178,9 +230,15 @@ def get_or_create_summary_doc(token, date_str):
     # 查找已存在的文档
     doc_id = find_doc_by_title(token, title)
     
+    is_new_doc = False
     if not doc_id:
         # 创建新文档
         doc_id = create_feishu_doc(token, title)
+        is_new_doc = True
+    
+    # 如果是新文档且有 user_open_id，自动授予编辑权限
+    if is_new_doc and doc_id and user_open_id:
+        add_doc_permission(token, doc_id, user_open_id)
     
     # 缓存
     if doc_id:
@@ -313,8 +371,8 @@ def append_to_doc(token, doc_id, content, timestamp):
         return False
 
 
-def save_to_feishu(token, category, content, timestamp, category_name, category_emoji):
-    """保存想法到飞书文档
+def save_to_feishu(token, category, content, timestamp, category_name, category_emoji, user_open_id=None):
+    """保存想法到飞书文档（自动授予用户编辑权限）
     
     同时保存到：
     1. 分类文档
@@ -327,6 +385,7 @@ def save_to_feishu(token, category, content, timestamp, category_name, category_
         timestamp: 完整时间戳
         category_name: 分类名称
         category_emoji: 分类图标
+        user_open_id: 用户的 open_id（可选，用于自动授权编辑权限）
         
     Returns:
         dict: {"success": bool, "doc_url": str, "summary_url": str}
@@ -345,7 +404,7 @@ def save_to_feishu(token, category, content, timestamp, category_name, category_
     summary_url = None
     
     # 1️⃣ 保存到分类文档
-    doc_id = get_or_create_daily_doc(token, category, date_str, category_name, category_emoji)
+    doc_id = get_or_create_daily_doc(token, category, date_str, category_name, category_emoji, user_open_id)
     if doc_id:
         if append_to_doc(token, doc_id, content, time_str):
             print(f"✅ 已保存到分类文档: {category_name}")
@@ -358,7 +417,7 @@ def save_to_feishu(token, category, content, timestamp, category_name, category_
         success = False
     
     # 2️⃣ 保存到汇总文档
-    summary_doc_id = get_or_create_summary_doc(token, date_str)
+    summary_doc_id = get_or_create_summary_doc(token, date_str, user_open_id)
     if summary_doc_id:
         summary_content = f"【{category_emoji} {category_name}】{content}"
         if append_to_doc(token, summary_doc_id, summary_content, time_str):
