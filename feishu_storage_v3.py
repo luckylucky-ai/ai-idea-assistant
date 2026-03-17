@@ -62,19 +62,14 @@ def create_feishu_doc(token, title):
         response = requests.post(url, headers=headers, json=data)
         result = response.json()
         
-        # 打印完整响应查看结构
-        print(f"🔍 创建文档响应: {json.dumps(result, ensure_ascii=False)[:500]}")
-        
         if result.get("code") == 0:
             doc_data = result["data"]["document"]
             doc_id = doc_data.get("document_id")
-            
+
             # 尝试获取 file_token（可能在响应中）
             file_token = doc_data.get("file_token") or doc_data.get("token")
-            
+
             print(f"✅ 创建文档成功: {title}")
-            print(f"   document_id: {doc_id}")
-            print(f"   file_token: {file_token}")
             
             return {
                 "doc_id": doc_id,
@@ -119,14 +114,9 @@ def add_doc_permission(token, doc_id, user_open_id):
             "type": "user"   # 协作者类型：用户
         }
         
-        print(f"🔍 授权请求URL: {url}")
-        print(f"🔍 授权参数: {data}")
-        
         response = requests.post(url, headers=headers, json=data)
         result = response.json()
-        
-        print(f"🔍 授权响应: {result}")
-        
+
         if result.get("code") == 0:
             print(f"✅ 已授予编辑权限: {doc_id} → {user_open_id}")
             return True
@@ -340,7 +330,6 @@ def append_to_doc(token, doc_id, content, timestamp, category_emoji="", category
         # 检查响应状态
         if response.status_code != 200:
             print(f"❌ HTTP 错误: {response.status_code}")
-            print(f"   完整响应: {response.text}")
             return False
         
         # 尝试解析 JSON
@@ -348,7 +337,6 @@ def append_to_doc(token, doc_id, content, timestamp, category_emoji="", category
             result = response.json()
         except Exception as json_err:
             print(f"❌ JSON 解析失败: {json_err}")
-            print(f"   响应文本: {response.text[:500]}")
             return False
         
         # 检查业务逻辑错误
