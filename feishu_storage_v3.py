@@ -345,7 +345,10 @@ def insert_image_block(token, doc_id, root_block_id, file_token):
         response = requests.post(
             url,
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            json={"children": [{"block_type": 27, "image": {"token": file_token}}]},
+            json={
+                "children": [{"block_type": 27, "image": {"token": file_token, "align": 1}}],
+                "index": -1,
+            },
         )
         result = response.json()
         if result.get("code") == 0:
