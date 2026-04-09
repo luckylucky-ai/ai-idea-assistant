@@ -47,7 +47,7 @@ def init_vault():
 
     try:
         if not vault.exists():
-            print(f"📥 克隆 Obsidian vault: {OBSIDIAN_REPO_URL}")
+            print(f"📥 克隆 Obsidian vault: github.com/luckylucky-ai/obsidian")
             result = subprocess.run(
                 ["git", "clone", OBSIDIAN_REPO_URL, str(vault)],
                 capture_output=True, text=True, timeout=60,
